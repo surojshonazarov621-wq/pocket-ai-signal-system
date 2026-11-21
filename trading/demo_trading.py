@@ -10,14 +10,17 @@ class DemoTrading:
 
     def __init__(self, initial_balance=100.00):
 
+        if initial_balance <= 0:
+            raise ValueError("Balans musbat bo'lishi kerak")
+
         self.balance = round(float(initial_balance), 2)
         self.initial_balance = self.balance
 
         self.base_stake = 1.00
         self.loss_streak = 0
+
         self.daily_loss = 0.00
         self.daily_trades = 0
-
         self.max_daily_loss = 10.00
         self.max_attempts = 5
 
@@ -28,7 +31,7 @@ class DemoTrading:
             max_stake=25.00,
             multiplier=2.2,
             max_attempts=5,
-            daily_loss_limit=self.max_daily_loss
+            daily_loss_limit=10.00
         )
 
         self.active_trade = None
@@ -39,6 +42,7 @@ class DemoTrading:
         today = datetime.now(UZ_TIME).date()
 
         if today != self.current_day:
+
             if self.active_trade is not None:
                 return False
 
@@ -51,10 +55,11 @@ class DemoTrading:
 
     def open_trade(self, signal):
 
-        self.refresh_day()
+        if not self.refresh_day():
+            return {"error": "Oldingi savdoni yoping"}
 
         if self.active_trade is not None:
-            return {"error": "Oldingi savdo yopilmagan"}
+            return {"error": "Savdo allaqachon ochilgan"}
 
         if signal not in ["BUY", "SELL"]:
             return {"error": "NO TRADE"}
@@ -72,7 +77,7 @@ class DemoTrading:
         if not self.risk.check_daily_limit(
             self.daily_loss, stake
         ):
-            return {"error": "Kunlik zarar limiti"}
+            return {"error": "Kunlik zarar limiti tugadi"}
 
         if stake > self.balance:
             return {"error": "Balans yetarli emas"}
@@ -98,7 +103,7 @@ class DemoTrading:
             return {"error": "Ochiq savdo mavjud emas"}
 
         if outcome not in ["WIN", "LOSS"]:
-            return {"error": "Natija noto'g'ri"}
+            return {"error": "Noto'g'ri natija"}
 
         if not 0 <= payout <= 1:
             return {"error": "Payout noto'g'ri"}
@@ -127,7 +132,7 @@ class DemoTrading:
             **trade,
             "outcome": outcome,
             "payout": payout,
-            "profit": profit,
+            "profit": round(profit, 2),
             "balance": self.balance,
             "closed_at": datetime.now(UZ_TIME).isoformat()
         }
@@ -140,20 +145,20 @@ class DemoTrading:
     def get_statistics(self):
 
         wins = sum(
-            1 for t in self.history
-            if t["outcome"] == "WIN"
+            1 for trade in self.history
+            if trade["outcome"] == "WIN"
         )
 
         losses = sum(
-            1 for t in self.history
-            if t["outcome"] == "LOSS"
+            1 for trade in self.history
+            if trade["outcome"] == "LOSS"
         )
 
         total = len(self.history)
 
         return {
-            "balance": self.balance,
             "initial_balance": self.initial_balance,
+            "current_balance": self.balance,
             "daily_loss": self.daily_loss,
             "daily_trades": self.daily_trades,
             "wins": wins,
