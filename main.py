@@ -1,82 +1,63 @@
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI
 from datetime import datetime, timezone
-
-from trading.demo_trading import DemoTrading
+from pydantic import BaseModel
 
 app = FastAPI(
     title="POCKET AI SIGNAL SYSTEM",
-    description="AI Trading Analysis and Demo System",
-    version="2.0.0"
+    description="AI Trading Signals API",
+    version="3.0.0"
 )
 
-demo = DemoTrading(initial_balance=100.00)
+signals_history = []
 
-
-class OpenTrade(BaseModel):
-    signal: str
-
-
-class CloseTrade(BaseModel):
-    outcome: str
-    payout: float = 0.80
-
+class Signal(BaseModel):
+    pair: str
+    direction: str
+    timeframe: str
 
 @app.get("/")
 def home():
     return {
         "system": "POCKET AI SIGNAL SYSTEM",
         "status": "ONLINE",
+        "version": "3.0.0",
         "mode": "DEMO",
-        "real_trading": "DISABLED",
+        "real_trading": False,
         "time": datetime.now(timezone.utc).isoformat()
     }
-
 
 @app.get("/health")
 def health():
     return {
         "status": "healthy",
-        "demo_trading": "ready",
-        "ai_engine": "development",
+        "signal_engine": "ready",
         "real_trading": "disabled"
     }
 
-
-@app.get("/demo/balance")
-def balance():
+@app.get("/signals")
+def get_signals():
     return {
-        "balance": demo.balance,
-        "currency": "USD"
+        "total": len(signals_history),
+        "signals": signals_history
     }
 
+@app.post("/signals")
+def create_signal(data: Signal):
+    if data.direction not in ["BUY", "SELL"]:
+        return {"error": "Invalid direction"}
 
-@app.post("/demo/open")
-def open_demo_trade(data: OpenTrade):
+    signal = {
+        "pair": data.pair,
+        "direction": data.direction,
+        "timeframe": data.timeframe,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "DEMO"
+    }
 
-    result = demo.open_trade(data.signal)
+    signals_history.append(signal)
 
-    if "error" in result:
-        raise HTTPException(400, result["error"])
-
-    return result
-
-
-@app.post("/demo/close")
-def close_demo_trade(data: CloseTrade):
-
-    result = demo.close_trade(
-        data.outcome,
-        data.payout
-    )
-
-    if "error" in result:
-        raise HTTPException(400, result["error"])
-
-    return result
-
-
-@app.get("/demo/statistics")
-def statistics():
-    return demo.get_statistics()
+    return {
+        "status": "success",
+        "signal": signal
+    }
