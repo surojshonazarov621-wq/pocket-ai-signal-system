@@ -1,3 +1,5 @@
+import math
+
 
 class RiskManager:
     def __init__(
@@ -6,13 +8,13 @@ class RiskManager:
         min_stake=1.0,
         max_stake=25.0,
         daily_loss_percent=5.0,
-        max_consecutive_losses=4,
+        max_consecutive_losses=5,
         max_daily_trades=1000,
         enabled=True,
-        martingale_enabled=False,
+        martingale_enabled=True,
         multiplier=2.2,
         max_attempts=5,
-        daily_loss_limit=None,
+        daily_loss_limit=10.0,
     ):
         self.risk_percent = float(risk_percent)
         self.min_stake = float(min_stake)
@@ -20,69 +22,47 @@ class RiskManager:
         self.daily_loss_percent = float(daily_loss_percent)
         self.max_consecutive_losses = int(max_consecutive_losses)
         self.max_daily_trades = int(max_daily_trades)
-
         self.enabled = bool(enabled)
         self.martingale_enabled = bool(martingale_enabled)
         self.multiplier = float(multiplier)
-
-        # Eski demo_trading.py bilan moslik
         self.max_attempts = int(max_attempts)
         self.daily_loss_limit = (
-            float(daily_loss_limit)
-            if daily_loss_limit is not None
-            else None
+            None if daily_loss_limit is None
+            else float(daily_loss_limit)
         )
-
         self._validate_settings()
 
     def _validate_settings(self):
         if not 0 < self.risk_percent <= 100:
             raise ValueError("Risk foizi 0 dan 100 gacha bo'lishi kerak")
-
         if self.min_stake <= 0 or self.max_stake < self.min_stake:
             raise ValueError("Stavka chegaralari noto'g'ri")
-
         if not 0 < self.daily_loss_percent <= 100:
             raise ValueError("Kunlik zarar foizi noto'g'ri")
-
         if self.max_consecutive_losses < 1:
-            raise ValueError("Ketma-ket zarar limiti kamida 1 bo'lishi kerak")
-
+            raise ValueError("Zarar limiti kamida 1 bo'lishi kerak")
         if self.max_daily_trades < 1:
             raise ValueError("Kunlik savdo limiti kamida 1 bo'lishi kerak")
-
         if self.max_attempts < 1:
             raise ValueError("Urinishlar soni kamida 1 bo'lishi kerak")
-
         if self.multiplier < 1:
             raise ValueError("Multiplier 1 yoki undan katta bo'lishi kerak")
-
         if self.daily_loss_limit is not None and self.daily_loss_limit <= 0:
             raise ValueError("Kunlik zarar limiti musbat bo'lishi kerak")
 
     def update_settings(self, **settings):
         allowed = {
-            "risk_percent",
-            "min_stake",
-            "max_stake",
-            "daily_loss_percent",
-            "max_consecutive_losses",
-            "max_daily_trades",
-            "enabled",
-            "martingale_enabled",
-            "multiplier",
-            "max_attempts",
-            "daily_loss_limit",
+            "risk_percent", "min_stake", "max_stake",
+            "daily_loss_percent", "max_consecutive_losses",
+            "max_daily_trades", "enabled", "martingale_enabled",
+            "multiplier", "max_attempts", "daily_loss_limit",
         }
 
         unknown = set(settings) - allowed
         if unknown:
             raise ValueError(f"Noma'lum sozlama: {', '.join(unknown)}")
 
-        old_settings = {
-            key: getattr(self, key)
-            for key in settings
-        }
+        old = {key: getattr(self, key) for key in settings}
 
         try:
             for key, value in settings.items():
@@ -96,8 +76,7 @@ class RiskManager:
                     setattr(self, key, int(value))
                 elif key == "daily_loss_limit":
                     setattr(
-                        self,
-                        key,
+                        self, key,
                         None if value is None else float(value)
                     )
                 else:
@@ -106,9 +85,14 @@ class RiskManager:
             self._validate_settings()
 
         except (TypeError, ValueError):
-            for key, value in old_settings.items():
+            for key, value in old.items():
                 setattr(self, key, value)
             raise
+
+    def _daily_limit(self, start_balance):
+        if self.daily_loss_limit is not None:
+            return self.daily_loss_limit
+        return start_balance * self.daily_loss_percent / 100
 
     def calculate_stake(
         self,
@@ -118,33 +102,41 @@ class RiskManager:
         daily_trades=0,
         day_start_balance=None,
     ):
-        balance = float(balance)
-        daily_loss = float(daily_loss)
-        losses = int(losses)
-        daily_trades = int(daily_trades)
+        try:
+            balance = float(balance)
+            daily_loss = float(daily_loss)
+            losses = int(losses)
+            daily_trades = int(daily_trades)
+            start_balance = (
+                balance if day_start_balance is None
+                else float(day_start_balance)
+            )
+        except (TypeError, ValueError):
+            return {"allowed": False, "reason": "Hisob qiymatlari noto'g'ri"}
+
+        numbers = (balance, daily_loss, start_balance)
+        if not all(math.isfinite(x) for x in numbers):
+            return {"allowed": False, "reason": "Hisob qiymatlari noto'g'ri"}
 
         if not self.enabled:
-            return {
-                "allowed": False,
-                "reason": "Risk boshqaruvi o'chirilgan",
-            }
+            return {"allowed": False, "reason": "Risk boshqaruvi o'chirilgan"}
 
-        if balance <= 0:
-            return {
-                "allowed": False,
-                "reason": "Balans yetarli emas",
-            }
+        if balance <= 0 or start_balance <= 0:
+            return {"allowed": False, "reason": "Balans yetarli emas"}
 
         if daily_loss < 0 or losses < 0 or daily_trades < 0:
-            return {
-                "allowed": False,
-                "reason": "Hisob qiymatlari noto'g'ri",
-            }
+            return {"allowed": False, "reason": "Hisob qiymatlari noto'g'ri"}
 
         if losses >= self.max_consecutive_losses:
             return {
                 "allowed": False,
                 "reason": "Ketma-ket zarar limiti tugadi",
+            }
+
+        if self.martingale_enabled and losses >= self.max_attempts:
+            return {
+                "allowed": False,
+                "reason": "Martingale urinishlari limiti tugadi",
             }
 
         if daily_trades >= self.max_daily_trades:
@@ -153,25 +145,7 @@ class RiskManager:
                 "reason": "Kunlik savdolar limiti tugadi",
             }
 
-        start_balance = (
-            balance
-            if day_start_balance is None
-            else float(day_start_balance)
-        )
-
-        if start_balance <= 0:
-            return {
-                "allowed": False,
-                "reason": "Kun boshidagi balans noto'g'ri",
-            }
-
-        if self.daily_loss_limit is not None:
-            daily_limit = self.daily_loss_limit
-        else:
-            daily_limit = (
-                start_balance * self.daily_loss_percent / 100
-            )
-
+        daily_limit = self._daily_limit(start_balance)
         remaining_risk = daily_limit - daily_loss
 
         if remaining_risk <= 0:
@@ -180,34 +154,43 @@ class RiskManager:
                 "reason": "Kunlik zarar limiti tugadi",
             }
 
-        stake = round(
-            balance * self.risk_percent / 100,
-            2
+        # Bazaviy stavka kun boshidagi balansdan hisoblanadi.
+        base_stake = round(start_balance * self.risk_percent / 100, 2)
+
+        # Har bir mag'lubiyatdan keyin stavka 2.2 baravar oshadi.
+        if self.martingale_enabled:
+            proposed_stake = base_stake * (self.multiplier ** losses)
+        else:
+            proposed_stake = base_stake
+
+        proposed_stake = round(proposed_stake, 2)
+
+        # Stavka balans, maksimal stavka va kunlik limitdan oshmaydi.
+        safe_stake = min(
+            proposed_stake,
+            self.max_stake,
+            balance,
+            remaining_risk,
         )
 
-        stake = min(
-            stake,
-            self.max_stake,
-            remaining_risk,
-            balance,
-        )
+        # Sentgacha pastga yaxlitlaymiz, limitdan oshmasligi uchun.
+        stake = math.floor(safe_stake * 100 + 1e-9) / 100
 
         if stake < self.min_stake:
             return {
                 "allowed": False,
-                "reason": "Hisoblangan stavka minimal stavkadan past",
+                "reason": "Stavka minimal miqdordan past yoki limit tugagan",
             }
 
         return {
             "allowed": True,
             "stake": round(stake, 2),
-            "risk_percent": self.risk_percent,
+            "base_stake": base_stake,
+            "attempt": losses + 1,
+            "multiplier": self.multiplier if self.martingale_enabled else 1,
             "daily_limit": round(daily_limit, 2),
             "daily_loss": round(daily_loss, 2),
-            "remaining_daily_risk": round(
-                daily_limit - daily_loss - stake,
-                2
-            ),
+            "remaining_daily_risk": round(daily_limit - daily_loss - stake, 2),
         }
 
     def check_daily_limit(
@@ -217,25 +200,30 @@ class RiskManager:
         balance=None,
         day_start_balance=None,
     ):
-        if balance is None or balance <= 0:
+        try:
+            daily_loss = float(daily_loss)
+            next_stake = float(next_stake)
+
+            if balance is None:
+                return False
+
+            balance = float(balance)
+            start_balance = (
+                balance if day_start_balance is None
+                else float(day_start_balance)
+            )
+        except (TypeError, ValueError):
             return False
 
-        start_balance = (
-            balance
-            if day_start_balance is None
-            else day_start_balance
-        )
-
-        if start_balance <= 0:
+        if not all(math.isfinite(x) for x in (
+            daily_loss, next_stake, balance, start_balance
+        )):
             return False
 
-        if self.daily_loss_limit is not None:
-            limit = self.daily_loss_limit
-        else:
-            limit = start_balance * self.daily_loss_percent / 100
+        if daily_loss < 0 or next_stake <= 0:
+            return False
+        if balance <= 0 or start_balance <= 0:
+            return False
 
-        return (
-            daily_loss >= 0
-            and next_stake > 0
-            and daily_loss + next_stake <= limit
-        )
+        limit = self._daily_limit(start_balance)
+        return daily_loss + next_stake <= limit + 1e-9
